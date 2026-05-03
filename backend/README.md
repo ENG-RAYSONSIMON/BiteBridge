@@ -31,7 +31,7 @@ If the database schema is not ready yet, run Prisma first:
 
 ```bash
 npm run prisma -- generate
-npm run prisma -- db push
+npm run prisma -- migrate dev
 ```
 
 ## Auth
@@ -68,6 +68,38 @@ CUSTOMER, RESTAURANT, RIDER, ADMIN
 | POST | `/api/menu` | RESTAURANT | Create a menu item for the logged-in user's restaurant |
 | GET | `/api/menu/my` | RESTAURANT | List all menu items for the logged-in user's restaurant |
 | DELETE | `/api/menu/:id` | RESTAURANT | Delete one of the logged-in user's menu items |
+| POST | `/api/orders` | CUSTOMER | Create an order from one restaurant's menu items |
+| GET | `/api/orders/my` | CUSTOMER | List the logged-in customer's orders |
+| PATCH | `/api/orders/:id/accept` | RESTAURANT | Accept an order for the logged-in user's restaurant |
+| PATCH | `/api/orders/:id/prepare` | RESTAURANT | Mark an order as preparing |
+| PATCH | `/api/orders/:id/assign` | RIDER | Assign the logged-in rider to an order |
+| PATCH | `/api/orders/:id/deliver` | RIDER | Mark an assigned order as delivered |
+
+## Order Status Flow
+
+Orders use these statuses:
+
+```text
+PENDING, ACCEPTED, PREPARING, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
+```
+
+Current endpoint flow:
+
+```text
+CUSTOMER creates order -> PENDING
+RESTAURANT accepts order -> ACCEPTED
+RESTAURANT starts preparing -> PREPARING
+RIDER assigns self -> OUT_FOR_DELIVERY
+RIDER marks delivered -> DELIVERED
+```
+
+Order rules:
+
+- A customer order must contain at least one item.
+- All items in one order must come from the same restaurant.
+- `totalAmount` is calculated by the API from menu item prices and quantities.
+- Restaurant users can accept only orders for their own restaurant.
+- Riders can mark delivered only orders assigned to themselves.
 
 ## Example Testing Flow
 
@@ -192,6 +224,122 @@ curl -X DELETE http://localhost:5000/api/menu/<menuItemId> \
   -H "Authorization: Bearer <token>"
 ```
 
+### 12. Register a customer user
+
+```bash
+curl -X POST http://localhost:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Customer User",
+    "email": "customer@example.com",
+    "password": "password123",
+    "phone": "255700000003",
+    "role": "CUSTOMER"
+  }'
+```
+
+Copy the returned `data.token` value as the customer token.
+
+### 13. Place an order
+
+Use one or more menu item ids from the same restaurant.
+
+```bash
+curl -X POST http://localhost:5000/api/orders \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <customer-token>" \
+  -d '{
+    "items": [
+      {
+        "menuItemId": "<menuItemId>",
+        "quantity": 2
+      }
+    ]
+  }'
+```
+
+Expected success response:
+
+```json
+{
+  "status": 1,
+  "message": "Order placed successfully",
+  "data": {
+    "id": "order-id",
+    "customerId": "customer-id",
+    "restaurantId": "restaurant-id",
+    "totalAmount": 24000,
+    "status": "PENDING",
+    "items": [
+      {
+        "id": "order-item-id",
+        "orderId": "order-id",
+        "menuItemId": "menu-item-id",
+        "quantity": 2,
+        "price": 12000
+      }
+    ]
+  }
+}
+```
+
+Copy the returned `data.id` as the order id.
+
+### 14. Get my orders
+
+```bash
+curl http://localhost:5000/api/orders/my \
+  -H "Authorization: Bearer <customer-token>"
+```
+
+### 15. Accept an order
+
+Only the restaurant owner for the ordered restaurant can accept it.
+
+```bash
+curl -X PATCH http://localhost:5000/api/orders/<orderId>/accept \
+  -H "Authorization: Bearer <restaurant-token>"
+```
+
+### 16. Mark an order as preparing
+
+```bash
+curl -X PATCH http://localhost:5000/api/orders/<orderId>/prepare \
+  -H "Authorization: Bearer <restaurant-token>"
+```
+
+### 17. Register a rider user
+
+```bash
+curl -X POST http://localhost:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Rider User",
+    "email": "rider@example.com",
+    "password": "password123",
+    "phone": "255700000004",
+    "role": "RIDER"
+  }'
+```
+
+Copy the returned `data.token` value as the rider token.
+
+### 18. Assign rider to an order
+
+This assigns the logged-in rider to the order and changes the status to `OUT_FOR_DELIVERY`.
+
+```bash
+curl -X PATCH http://localhost:5000/api/orders/<orderId>/assign \
+  -H "Authorization: Bearer <rider-token>"
+```
+
+### 19. Mark an order as delivered
+
+```bash
+curl -X PATCH http://localhost:5000/api/orders/<orderId>/deliver \
+  -H "Authorization: Bearer <rider-token>"
+```
+
 ## Role Test Endpoints
 
 Use these to confirm role-based access control:
@@ -235,5 +383,21 @@ Validation or business rule errors, such as duplicate email or missing restauran
 {
   "status": 0,
   "message": "Error message here"
+}
+```
+
+Examples of order business rule errors:
+
+```json
+{
+  "status": 0,
+  "message": "Order must contain items"
+}
+```
+
+```json
+{
+  "status": 0,
+  "message": "All items must be from the same restaurant"
 }
 ```

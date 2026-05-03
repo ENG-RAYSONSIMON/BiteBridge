@@ -24,6 +24,8 @@ model User {
   updatedAt DateTime @updatedAt
 
   restaurant Restaurant?
+  orders     Order[]
+  riderOrders Order[] @relation("RiderOrders")
 }
 
 model Restaurant {
@@ -39,6 +41,7 @@ model Restaurant {
 
   owner User @relation(fields: [ownerId], references: [id])
   menuItems MenuItem[]
+  orders     Order[]
 }
 
 model MenuItem {
@@ -54,4 +57,45 @@ model MenuItem {
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  orderItems OrderItem[]
+
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  PREPARING
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+model Order {
+  id            String      @id @default(uuid())
+  customerId    String
+  restaurantId  String
+  totalAmount   Float
+  status        OrderStatus @default(PENDING)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer   User       @relation(fields: [customerId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  items      OrderItem[]
+
+  riderId String?
+  rider   User? @relation("RiderOrders", fields: [riderId], references: [id])
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  menuItemId String
+  quantity  Int
+  price     Float
+
+  order     Order    @relation(fields: [orderId], references: [id])
+  menuItem  MenuItem @relation(fields: [menuItemId], references: [id])
 }
