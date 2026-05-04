@@ -100,6 +100,18 @@ docker compose -f docker-compose.dev.yml exec app npx prisma migrate deploy
 
 The app container already runs `npx prisma migrate deploy` before starting.
 
+Open Prisma Studio:
+
+```bash
+docker compose -f docker-compose.dev.yml exec app npx prisma studio --port 5555 --browser none
+```
+
+Then open:
+
+```text
+http://localhost:5555
+```
+
 ### Production Compose
 
 Create a production env file:
