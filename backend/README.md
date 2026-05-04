@@ -5,12 +5,134 @@ Simple guide for running and manually testing the current Express API endpoints 
 ## Base URL
 
 ```text
-http://localhost:5000
+http://localhost:3000
 ```
 
-The server uses `process.env.PORT` when set, otherwise it runs on port `5000`.
+When running with Docker, set `PORT=3000` so the Node server listens on the same port exposed by the container.
 
 ## Setup
+
+### Run With Docker
+
+Requirements:
+
+- Docker Desktop
+- Docker Compose
+
+From a fresh clone, go into the backend folder:
+
+```bash
+cd backend
+```
+
+Create your development env file:
+
+```bash
+cp .env.example .env
+```
+
+Update `.env` with your own values. For Docker development, keep `PORT=3000`.
+
+```env
+POSTGRES_USER=your_postgres_user
+POSTGRES_PASSWORD=your_postgres_password
+POSTGRES_DB=your_postgres_database
+DATABASE_URL=postgresql://your_postgres_user:your_postgres_password@localhost:5432/your_postgres_database?schema=public
+PORT=3000
+NODE_ENV=development
+JWT_SECRET=your-secret
+```
+
+The `DATABASE_URL` value in `.env` is useful for local Prisma commands and editor tooling. Docker Compose overrides it inside the app container so the API connects to the internal database service at `db:5432`.
+
+Start the development stack:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+This starts:
+
+- `app`: Express API using the Dockerfile `development` stage
+- `db`: PostgreSQL 16 Alpine
+
+The API is available at:
+
+```text
+http://localhost:3000
+```
+
+The database is also exposed locally for tools such as TablePlus, DBeaver, or Prisma Studio:
+
+```text
+localhost:5432
+```
+
+Stop the stack:
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+Stop the stack and remove the development database volume:
+
+```bash
+docker compose -f docker-compose.dev.yml down -v
+```
+
+Run logs again after the first build:
+
+```bash
+docker compose -f docker-compose.dev.yml up
+```
+
+Run a command inside the app container:
+
+```bash
+docker compose -f docker-compose.dev.yml exec app sh
+```
+
+Apply Prisma migrations manually if needed:
+
+```bash
+docker compose -f docker-compose.dev.yml exec app npx prisma migrate deploy
+```
+
+The app container already runs `npx prisma migrate deploy` before starting.
+
+### Production Compose
+
+Create a production env file:
+
+```bash
+cp .env.example .env.production
+```
+
+Update `.env.production` with production values. Keep `PORT=3000` unless you also update the Compose port mapping.
+
+Start the production stack:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml up --build -d
+```
+
+Use `--env-file .env.production` because Compose variable interpolation happens before `env_file` is applied.
+
+View logs:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml logs -f
+```
+
+Stop production:
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml down
+```
+
+In production Compose, PostgreSQL is not exposed to the host. Only the API port is published.
+
+### Run Locally Without Docker
 
 From the `backend` folder:
 
@@ -26,6 +148,8 @@ DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE"
 JWT_SECRET="your-secret"
 PORT=5000
 ```
+
+With `PORT=5000`, the local non-Docker API is available at `http://localhost:5000`.
 
 If the database schema is not ready yet, run Prisma first:
 
