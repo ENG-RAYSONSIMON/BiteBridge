@@ -12,7 +12,7 @@ When running with Docker, set `PORT=3000` so the Node server listens on the same
 
 ## Setup
 
-### Run With Docker
+### Run Everything With Docker
 
 Requirements:
 
@@ -37,13 +37,17 @@ Update `.env` with your own values. For Docker development, keep `PORT=3000`.
 POSTGRES_USER=your_postgres_user
 POSTGRES_PASSWORD=your_postgres_password
 POSTGRES_DB=your_postgres_database
-DATABASE_URL=postgresql://your_postgres_user:your_postgres_password@localhost:5432/your_postgres_database?schema=public
+POSTGRES_PORT=5433
+DATABASE_URL=postgresql://your_postgres_user:your_url_encoded_postgres_password@localhost:5433/your_postgres_database?schema=public
+DATABASE_URL_DOCKER=postgresql://your_postgres_user:your_url_encoded_postgres_password@db:5432/your_postgres_database?schema=public
 PORT=3000
 NODE_ENV=development
 JWT_SECRET=your-secret
 ```
 
-The `DATABASE_URL` value in `.env` is useful for local Prisma commands and editor tooling. Docker Compose overrides it inside the app container so the API connects to the internal database service at `db:5432`.
+The `DATABASE_URL` value in `.env` is useful for local Prisma commands and editor tooling. If your password contains special characters, URL encode them. For example, `Postgres@2026` becomes `Postgres%402026`.
+
+Docker Compose uses `DATABASE_URL_DOCKER` inside Docker so containers connect to the internal database service at `db:5432`.
 
 Start the development stack:
 
@@ -53,8 +57,10 @@ docker compose -f docker-compose.dev.yml up --build
 
 This starts:
 
-- `app`: Express API using the Dockerfile `development` stage
 - `db`: PostgreSQL 16 Alpine
+- `migrate`: Prisma migration runner
+- `app`: Express API using the Dockerfile `development` stage
+- `studio`: Prisma Studio
 
 The API is available at:
 
@@ -62,11 +68,19 @@ The API is available at:
 http://localhost:3000
 ```
 
-The database is also exposed locally for tools such as TablePlus, DBeaver, or Prisma Studio:
+Prisma Studio is available at:
 
 ```text
-localhost:5432
+http://localhost:5555
 ```
+
+The database is also exposed locally for tools such as TablePlus or DBeaver:
+
+```text
+localhost:5433
+```
+
+By default this repo maps PostgreSQL to `localhost:5433` to avoid clashing with a local PostgreSQL already using `5432`. Inside Docker, services still connect to `db:5432`.
 
 Stop the stack:
 
@@ -86,7 +100,7 @@ Run logs again after the first build:
 docker compose -f docker-compose.dev.yml up
 ```
 
-Run a command inside the app container:
+Run a shell inside the app container:
 
 ```bash
 docker compose -f docker-compose.dev.yml exec app sh
@@ -95,18 +109,141 @@ docker compose -f docker-compose.dev.yml exec app sh
 Apply Prisma migrations manually if needed:
 
 ```bash
-docker compose -f docker-compose.dev.yml exec app npx prisma migrate deploy
+docker compose -f docker-compose.dev.yml run --rm migrate
 ```
 
-The app container already runs `npx prisma migrate deploy` before starting.
+The `migrate` container already runs before the API starts.
 
-Open Prisma Studio:
+Apply a new migration after the Docker containers are already running:
 
 ```bash
-docker compose -f docker-compose.dev.yml exec app npx prisma studio --port 5555 --browser none
+cd backend
+docker compose -f docker-compose.dev.yml run --rm migrate
+docker compose -f docker-compose.dev.yml exec app npx prisma migrate status
+docker compose -f docker-compose.dev.yml restart app studio
 ```
 
-Then open:
+Use this when you add a new folder under `prisma/migrations/` and want to apply it to the PostgreSQL database running in Docker. The first command applies pending migrations, the second confirms the database is up to date, and the restart reloads the API and Prisma Studio.
+
+Run Prisma commands inside Docker:
+
+```bash
+docker compose -f docker-compose.dev.yml exec app npx prisma --help
+```
+
+Shortcut scripts are also available from the `backend` folder:
+
+```bash
+npm run docker:dev
+npm run docker:dev:detached
+npm run docker:down
+npm run docker:reset
+```
+
+Use `docker:reset` only when you want to delete the development database volume and start with an empty database.
+
+### Docker-First Data Flow
+
+After `docker compose -f docker-compose.dev.yml up --build` is running, test the API:
+
+```bash
+curl http://localhost:3000/
+```
+
+Expected response:
+
+```json
+{
+  "status": 1,
+  "message": "Food Ordering API is running"
+}
+```
+
+Register a user. New users start as `CUSTOMER` automatically:
+
+```bash
+curl -X POST http://localhost:3000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Mama Bite",
+    "email": "restaurant@example.com",
+    "password": "password123"
+  }'
+```
+
+Copy `data.token` from the response, then switch the account to `RESTAURANT`:
+
+```bash
+curl -X PATCH http://localhost:3000/api/auth/me/role \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer CUSTOMER_TOKEN" \
+  -d '{
+    "role": "RESTAURANT"
+  }'
+```
+
+Copy the returned `data.token` from the role update response. Use it as `RESTAURANT_TOKEN`.
+
+Create a restaurant:
+
+```bash
+curl -X POST http://localhost:3000/api/restaurants \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer RESTAURANT_TOKEN" \
+  -d '{
+    "name": "Mama Bite Kitchen",
+    "description": "Fresh local meals",
+    "address": "Dar es Salaam",
+    "phone": "+255700000001"
+  }'
+```
+
+Create a menu item:
+
+```bash
+curl -X POST http://localhost:3000/api/menu \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer RESTAURANT_TOKEN" \
+  -d '{
+    "name": "Pilau",
+    "description": "Spiced rice with beef",
+    "price": 8000
+  }'
+```
+
+Copy `data.id` from the menu item response. Use it as `MENU_ITEM_ID`.
+
+Register a customer:
+
+```bash
+curl -X POST http://localhost:3000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Test Customer",
+    "email": "customer@example.com",
+    "password": "password123"
+  }'
+```
+
+Copy `data.token` from the response. Use it as `CUSTOMER_TOKEN`.
+
+Create an order:
+
+```bash
+curl -X POST http://localhost:3000/api/orders \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer CUSTOMER_TOKEN" \
+  -d '{
+    "items": [
+      {
+        "menuItemId": "MENU_ITEM_ID",
+        "quantity": 2
+      }
+    ]
+  }'
+```
+
+Now open Prisma Studio and inspect the inserted records:
 
 ```text
 http://localhost:5555
@@ -180,7 +317,15 @@ Authorization: Bearer <token>
 
 Tokens are returned by `POST /api/auth/register` and `POST /api/auth/login`.
 
-Valid roles are:
+New users are registered as `CUSTOMER`. Logged-in users can update their own role to one of these self-assignable roles:
+
+```text
+CUSTOMER, RESTAURANT, RIDER
+```
+
+`ADMIN` is not self-assignable through the public API.
+
+All roles are:
 
 ```text
 CUSTOMER, RESTAURANT, RIDER, ADMIN
@@ -194,6 +339,7 @@ CUSTOMER, RESTAURANT, RIDER, ADMIN
 | POST | `/api/auth/register` | Public | Register a user and receive a JWT |
 | POST | `/api/auth/login` | Public | Login and receive a JWT |
 | GET | `/api/auth/me` | Any logged-in user | Get the current user |
+| PATCH | `/api/auth/me/role` | Any logged-in user | Update current user's role to CUSTOMER, RESTAURANT, or RIDER and receive a fresh JWT |
 | GET | `/api/auth/admin-only` | ADMIN | Test admin role access |
 | GET | `/api/auth/restaurant-only` | RESTAURANT | Test restaurant role access |
 | GET | `/api/auth/rider-only` | RIDER | Test rider role access |
@@ -206,9 +352,11 @@ CUSTOMER, RESTAURANT, RIDER, ADMIN
 | DELETE | `/api/menu/:id` | RESTAURANT | Delete one of the logged-in user's menu items |
 | POST | `/api/orders` | CUSTOMER | Create an order from one restaurant's menu items |
 | GET | `/api/orders/my` | CUSTOMER | List the logged-in customer's orders |
+| GET | `/api/orders/available` | RIDER | List ready, unassigned orders available for pickup |
 | PATCH | `/api/orders/:id/accept` | RESTAURANT | Accept an order for the logged-in user's restaurant |
 | PATCH | `/api/orders/:id/prepare` | RESTAURANT | Mark an order as preparing |
-| PATCH | `/api/orders/:id/assign` | RIDER | Assign the logged-in rider to an order |
+| PATCH | `/api/orders/:id/ready` | RESTAURANT | Mark a preparing order as ready for pickup |
+| PATCH | `/api/orders/:id/assign` | RIDER | Assign the logged-in rider to a ready order |
 | PATCH | `/api/orders/:id/deliver` | RIDER | Mark an assigned order as delivered |
 
 ## Order Status Flow
@@ -216,7 +364,7 @@ CUSTOMER, RESTAURANT, RIDER, ADMIN
 Orders use these statuses:
 
 ```text
-PENDING, ACCEPTED, PREPARING, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
+PENDING, ACCEPTED, PREPARING, READY_FOR_PICKUP, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
 ```
 
 Current endpoint flow:
@@ -225,6 +373,7 @@ Current endpoint flow:
 CUSTOMER creates order -> PENDING
 RESTAURANT accepts order -> ACCEPTED
 RESTAURANT starts preparing -> PREPARING
+RESTAURANT marks ready -> READY_FOR_PICKUP
 RIDER assigns self -> OUT_FOR_DELIVERY
 RIDER marks delivered -> DELIVERED
 ```
@@ -235,14 +384,18 @@ Order rules:
 - All items in one order must come from the same restaurant.
 - `totalAmount` is calculated by the API from menu item prices and quantities.
 - Restaurant users can accept only orders for their own restaurant.
-- Riders can mark delivered only orders assigned to themselves.
+- Restaurant users can mark only their own accepted orders as preparing.
+- Restaurant users can mark only their own preparing orders as ready for pickup.
+- Riders can list ready, unassigned orders.
+- Riders can assign themselves only to ready, unassigned orders.
+- Riders can mark delivered only out-for-delivery orders assigned to themselves.
 
 ## Example Testing Flow
 
 ### 1. Check the API
 
 ```bash
-curl http://localhost:5000/
+curl http://localhost:3000/
 ```
 
 Expected success response:
@@ -254,26 +407,25 @@ Expected success response:
 }
 ```
 
-### 2. Register a restaurant user
+### 2. Register a user
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/register \
+curl -X POST http://localhost:3000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "fullName": "Restaurant Owner",
     "email": "owner@example.com",
     "password": "password123",
-    "phone": "255700000001",
-    "role": "RESTAURANT"
+    "phone": "255700000001"
   }'
 ```
 
-Copy the returned `data.token` value for protected requests.
+Copy the returned `data.token` value. New users are `CUSTOMER` by default.
 
 ### 3. Login
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/login \
+curl -X POST http://localhost:3000/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "owner@example.com",
@@ -281,19 +433,32 @@ curl -X POST http://localhost:5000/api/auth/login \
   }'
 ```
 
-### 4. Get the current user
+### 4. Become a restaurant user
 
 ```bash
-curl http://localhost:5000/api/auth/me \
+curl -X PATCH http://localhost:3000/api/auth/me/role \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "role": "RESTAURANT"
+  }'
+```
+
+Copy the returned `data.token` value and use it for restaurant protected requests.
+
+### 5. Get the current user
+
+```bash
+curl http://localhost:3000/api/auth/me \
   -H "Authorization: Bearer <token>"
 ```
 
-### 5. Create a restaurant
+### 6. Create a restaurant
 
 Only a user with role `RESTAURANT` can create a restaurant.
 
 ```bash
-curl -X POST http://localhost:5000/api/restaurants \
+curl -X POST http://localhost:3000/api/restaurants \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{
@@ -306,25 +471,25 @@ curl -X POST http://localhost:5000/api/restaurants \
 
 Copy the returned `data.id` as the restaurant id.
 
-### 6. List restaurants
+### 7. List restaurants
 
 ```bash
-curl http://localhost:5000/api/restaurants
+curl http://localhost:3000/api/restaurants
 ```
 
-### 7. Get my restaurant
+### 8. Get my restaurant
 
 ```bash
-curl http://localhost:5000/api/restaurants/me \
+curl http://localhost:3000/api/restaurants/me \
   -H "Authorization: Bearer <token>"
 ```
 
-### 8. Create a menu item
+### 9. Create a menu item
 
 The logged-in restaurant user must already have a restaurant.
 
 ```bash
-curl -X POST http://localhost:5000/api/menu \
+curl -X POST http://localhost:3000/api/menu \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{
@@ -338,50 +503,49 @@ curl -X POST http://localhost:5000/api/menu \
 
 Copy the returned `data.id` as the menu item id.
 
-### 9. Get my menu
+### 10. Get my menu
 
 ```bash
-curl http://localhost:5000/api/menu/my \
+curl http://localhost:3000/api/menu/my \
   -H "Authorization: Bearer <token>"
 ```
 
-### 10. Get public restaurant menu
+### 11. Get public restaurant menu
 
 ```bash
-curl http://localhost:5000/api/menu/restaurant/<restaurantId>
+curl http://localhost:3000/api/menu/restaurant/<restaurantId>
 ```
 
 This only returns items where `isAvailable` is `true`.
 
-### 11. Delete a menu item
+### 12. Delete a menu item
 
 ```bash
-curl -X DELETE http://localhost:5000/api/menu/<menuItemId> \
+curl -X DELETE http://localhost:3000/api/menu/<menuItemId> \
   -H "Authorization: Bearer <token>"
 ```
 
-### 12. Register a customer user
+### 13. Register a customer user
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/register \
+curl -X POST http://localhost:3000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "fullName": "Customer User",
     "email": "customer@example.com",
     "password": "password123",
-    "phone": "255700000003",
-    "role": "CUSTOMER"
+    "phone": "255700000003"
   }'
 ```
 
 Copy the returned `data.token` value as the customer token.
 
-### 13. Place an order
+### 14. Place an order
 
 Use one or more menu item ids from the same restaurant.
 
 ```bash
-curl -X POST http://localhost:5000/api/orders \
+curl -X POST http://localhost:3000/api/orders \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <customer-token>" \
   -d '{
@@ -421,58 +585,86 @@ Expected success response:
 
 Copy the returned `data.id` as the order id.
 
-### 14. Get my orders
+### 15. Get my orders
 
 ```bash
-curl http://localhost:5000/api/orders/my \
+curl http://localhost:3000/api/orders/my \
   -H "Authorization: Bearer <customer-token>"
 ```
 
-### 15. Accept an order
+### 16. Accept an order
 
 Only the restaurant owner for the ordered restaurant can accept it.
 
 ```bash
-curl -X PATCH http://localhost:5000/api/orders/<orderId>/accept \
+curl -X PATCH http://localhost:3000/api/orders/<orderId>/accept \
   -H "Authorization: Bearer <restaurant-token>"
 ```
 
-### 16. Mark an order as preparing
+### 17. Mark an order as preparing
 
 ```bash
-curl -X PATCH http://localhost:5000/api/orders/<orderId>/prepare \
+curl -X PATCH http://localhost:3000/api/orders/<orderId>/prepare \
   -H "Authorization: Bearer <restaurant-token>"
 ```
 
-### 17. Register a rider user
+### 18. Register a rider user
 
 ```bash
-curl -X POST http://localhost:5000/api/auth/register \
+curl -X POST http://localhost:3000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "fullName": "Rider User",
     "email": "rider@example.com",
     "password": "password123",
-    "phone": "255700000004",
+    "phone": "255700000004"
+  }'
+```
+
+Copy the returned `data.token` value, then switch the account to `RIDER`:
+
+```bash
+curl -X PATCH http://localhost:3000/api/auth/me/role \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <rider-token>" \
+  -d '{
     "role": "RIDER"
   }'
 ```
 
 Copy the returned `data.token` value as the rider token.
 
-### 18. Assign rider to an order
+### 19. Mark an order as ready for pickup
 
-This assigns the logged-in rider to the order and changes the status to `OUT_FOR_DELIVERY`.
+Only the restaurant owner for the ordered restaurant can mark a preparing order as ready.
 
 ```bash
-curl -X PATCH http://localhost:5000/api/orders/<orderId>/assign \
+curl -X PATCH http://localhost:3000/api/orders/<orderId>/ready \
+  -H "Authorization: Bearer <restaurant-token>"
+```
+
+### 20. List available orders as rider
+
+This returns orders with status `READY_FOR_PICKUP` that do not have a rider yet.
+
+```bash
+curl http://localhost:3000/api/orders/available \
   -H "Authorization: Bearer <rider-token>"
 ```
 
-### 19. Mark an order as delivered
+### 21. Assign rider to an order
+
+This assigns the logged-in rider to a ready order and changes the status to `OUT_FOR_DELIVERY`.
 
 ```bash
-curl -X PATCH http://localhost:5000/api/orders/<orderId>/deliver \
+curl -X PATCH http://localhost:3000/api/orders/<orderId>/assign \
+  -H "Authorization: Bearer <rider-token>"
+```
+
+### 22. Mark an order as delivered
+
+```bash
+curl -X PATCH http://localhost:3000/api/orders/<orderId>/deliver \
   -H "Authorization: Bearer <rider-token>"
 ```
 
@@ -481,13 +673,13 @@ curl -X PATCH http://localhost:5000/api/orders/<orderId>/deliver \
 Use these to confirm role-based access control:
 
 ```bash
-curl http://localhost:5000/api/auth/restaurant-only \
+curl http://localhost:3000/api/auth/restaurant-only \
   -H "Authorization: Bearer <restaurant-token>"
 
-curl http://localhost:5000/api/auth/admin-only \
+curl http://localhost:3000/api/auth/admin-only \
   -H "Authorization: Bearer <admin-token>"
 
-curl http://localhost:5000/api/auth/rider-only \
+curl http://localhost:3000/api/auth/rider-only \
   -H "Authorization: Bearer <rider-token>"
 ```
 

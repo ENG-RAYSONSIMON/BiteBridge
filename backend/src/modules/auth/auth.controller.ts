@@ -1,5 +1,10 @@
 import { Request, Response } from "express";
-import { loginUser, registerUser, getCurrentUser } from "./auth.service";
+import {
+    loginUser,
+    registerUser,
+    getCurrentUser,
+    updateCurrentUserRole,
+} from "./auth.service";
 
 export const register = async (req: Request, res: Response) => {
     try {
@@ -52,6 +57,32 @@ export const me = async (req: Request, res: Response) => {
             status: 1,
             message: "User fetched successfully",
             data: user,
+        });
+    } catch (error: any) {
+        res.status(400).json({
+            status: 0,
+            message: error.message,
+        });
+    }
+};
+
+export const updateMyRole = async (req: Request, res: Response) => {
+    try {
+        const userId = req.user?.userId;
+
+        if (!userId) {
+            return res.status(401).json({
+                status: 0,
+                message: "Unauthorized",
+            });
+        }
+
+        const result = await updateCurrentUserRole(userId, req.body);
+
+        res.status(200).json({
+            status: 1,
+            message: "Role updated successfully",
+            data: result,
         });
     } catch (error: any) {
         res.status(400).json({

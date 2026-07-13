@@ -1,5 +1,14 @@
 import { Request, Response } from "express";
-import { acceptOrder, assignRider, createOrder, getMyOrders, markDelivered, startPreparing } from "./order.service";
+import {
+    acceptOrder,
+    assignRider,
+    createOrder,
+    getAvailableOrders,
+    getMyOrders,
+    markDelivered,
+    markReadyForPickup,
+    startPreparing,
+} from "./order.service";
 
 export const create = async (req: Request, res: Response) => {
     try {
@@ -45,6 +54,22 @@ export const myOrders = async (req: Request, res: Response) => {
     }
 };
 
+export const available = async (_req: Request, res: Response) => {
+    try {
+        const orders = await getAvailableOrders();
+
+        res.json({
+            status: 1,
+            data: orders,
+        });
+    } catch (error: any) {
+        res.status(400).json({
+            status: 0,
+            message: error.message,
+        });
+    }
+};
+
 export const accept = async (req: Request, res: Response) => {
     try {
         const ownerId = req.user?.userId;
@@ -64,6 +89,19 @@ export const prepare = async (req: Request, res: Response) => {
         const { id } = req.params;
 
         const order = await startPreparing(ownerId!, id as string);
+
+        res.json({ status: 1, data: order });
+    } catch (error: any) {
+        res.status(400).json({ status: 0, message: error.message });
+    }
+};
+
+export const ready = async (req: Request, res: Response) => {
+    try {
+        const ownerId = req.user?.userId;
+        const { id } = req.params;
+
+        const order = await markReadyForPickup(ownerId!, id as string);
 
         res.json({ status: 1, data: order });
     } catch (error: any) {

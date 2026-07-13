@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { login, me, register } from "./auth.controller";
+import { login, me, register, updateMyRole } from "./auth.controller";
 import { authMiddleware } from "../../middlewares/auth.middleware";
 import { allowRoles } from "../../middlewares/role.middleware";
 
@@ -9,6 +9,7 @@ router.post("/register", register);
 router.post("/login", login);
 
 router.get("/me", authMiddleware, me);
+router.patch("/me/role", authMiddleware, updateMyRole);
 
 // Test RBAC routes
 router.get(
