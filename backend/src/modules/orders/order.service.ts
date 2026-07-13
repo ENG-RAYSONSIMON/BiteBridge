@@ -80,6 +80,29 @@ export const getMyOrders = async (customerId: string) => {
     });
 };
 
+export const getAvailableOrders = async () => {
+    return prisma.order.findMany({
+        where: {
+            status: "READY_FOR_PICKUP",
+            riderId: null,
+        },
+        include: {
+            items: true,
+            restaurant: true,
+            customer: {
+                select: {
+                    id: true,
+                    fullName: true,
+                    phone: true,
+                },
+            },
+        },
+        orderBy: {
+            updatedAt: "asc",
+        },
+    });
+};
+
 export const acceptOrder = async (restaurantOwnerId: string, orderId: string) => {
     const restaurant = await prisma.restaurant.findUnique({
         where: { ownerId: restaurantOwnerId },
@@ -95,6 +118,10 @@ export const acceptOrder = async (restaurantOwnerId: string, orderId: string) =>
         throw new Error("Not authorized");
     }
 
+    if (order.status !== "PENDING") {
+        throw new Error("Only pending orders can be accepted");
+    }
+
     return prisma.order.update({
         where: { id: orderId },
         data: { status: "ACCEPTED" },
@@ -108,21 +135,75 @@ export const startPreparing = async (restaurantOwnerId: string, orderId: string)
 
     if (!restaurant) throw new Error("Restaurant not found");
 
+    const order = await prisma.order.findUnique({
+        where: { id: orderId },
+    });
+
+    if (!order || order.restaurantId !== restaurant.id) {
+        throw new Error("Not authorized");
+    }
+
+    if (order.status !== "ACCEPTED") {
+        throw new Error("Only accepted orders can be marked as preparing");
+    }
+
     return prisma.order.update({
         where: { id: orderId },
         data: { status: "PREPARING" },
     });
 };
 
+export const markReadyForPickup = async (restaurantOwnerId: string, orderId: string) => {
+    const restaurant = await prisma.restaurant.findUnique({
+        where: { ownerId: restaurantOwnerId },
+    });
 
-export const assignRider = async (riderId: string, orderId: string) => {
+    if (!restaurant) throw new Error("Restaurant not found");
+
+    const order = await prisma.order.findUnique({
+        where: { id: orderId },
+    });
+
+    if (!order || order.restaurantId !== restaurant.id) {
+        throw new Error("Not authorized");
+    }
+
+    if (order.status !== "PREPARING") {
+        throw new Error("Only preparing orders can be marked as ready for pickup");
+    }
+
     return prisma.order.update({
         where: { id: orderId },
+        data: { status: "READY_FOR_PICKUP" },
+    });
+};
+
+export const assignRider = async (riderId: string, orderId: string) => {
+    const result = await prisma.order.updateMany({
+        where: {
+            id: orderId,
+            status: "READY_FOR_PICKUP",
+            riderId: null,
+        },
         data: {
             riderId,
             status: "OUT_FOR_DELIVERY",
         },
     });
+
+    if (result.count === 0) {
+        throw new Error("Order is not available for pickup");
+    }
+
+    const order = await prisma.order.findUnique({
+        where: { id: orderId },
+    });
+
+    if (!order) {
+        throw new Error("Order not found");
+    }
+
+    return order;
 };
 
 export const markDelivered = async (riderId: string, orderId: string) => {
@@ -134,9 +215,12 @@ export const markDelivered = async (riderId: string, orderId: string) => {
         throw new Error("Not authorized");
     }
 
+    if (order.status !== "OUT_FOR_DELIVERY") {
+        throw new Error("Only out-for-delivery orders can be marked as delivered");
+    }
+
     return prisma.order.update({
         where: { id: orderId },
         data: { status: "DELIVERED" },
     });
 };
-
